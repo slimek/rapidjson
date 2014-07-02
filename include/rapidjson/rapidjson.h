@@ -209,38 +209,6 @@ struct StreamTraits {
 	enum { copyOptimization = 0 };
 };
 
-template<typename Stream, bool>
-class StreamLocalCopy;
-
-template<typename Stream>
-class StreamLocalCopy<Stream, 1> {
-public:
-	StreamLocalCopy(Stream& original) : original_(original), s_(original) {}
-	~StreamLocalCopy() { original_ = s_; }
-	Stream* operator->() { return &s_; }
-	Stream& operator*() { return s_; }
-
-private:
-	StreamLocalCopy& operator=(const StreamLocalCopy&);
-
-	Stream& original_;
-	Stream s_;
-};
-
-template<typename Stream>
-class StreamLocalCopy<Stream, 0> {
-public:
-	StreamLocalCopy(Stream& original) : s_(original) {}
-	~StreamLocalCopy() {}
-	Stream* operator->() { return &s_; }
-	Stream& operator*() { return s_; }
-
-private:
-	StreamLocalCopy& operator=(const StreamLocalCopy&);
-
-	Stream& s_;
-};
-
 //! Put N copies of a character to a stream.
 template<typename Stream, typename Ch>
 inline void PutN(Stream& stream, Ch c, size_t n) {
@@ -275,7 +243,7 @@ struct GenericStringStream {
 
 template <typename Encoding>
 struct StreamTraits<GenericStringStream<Encoding> > {
-	enum { copyOptimization = 1 };
+	enum { copyOptimization = 0 };
 };
 
 typedef GenericStringStream<UTF8<> > StringStream;

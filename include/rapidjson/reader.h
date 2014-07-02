@@ -127,6 +127,44 @@ struct BaseReaderHandler {
 };
 
 ///////////////////////////////////////////////////////////////////////////////
+// StreamLocalCopy
+
+namespace internal {
+
+template<typename Stream, int>
+class StreamLocalCopy;
+
+//! Do copy optimziation.
+template<typename Stream>
+class StreamLocalCopy<Stream, 1> {
+public:
+	StreamLocalCopy(Stream& original) : s(original), original_(original) {}
+	~StreamLocalCopy() { original_ = s; }
+
+	Stream s;
+
+private:
+	StreamLocalCopy& operator=(const StreamLocalCopy&);
+
+	Stream& original_;
+};
+
+//! Keep reference.
+template<typename Stream>
+class StreamLocalCopy<Stream, 0> {
+public:
+	StreamLocalCopy(Stream& original) : s(original) {}
+	~StreamLocalCopy() {}
+	
+	Stream& s;
+
+private:
+	StreamLocalCopy& operator=(const StreamLocalCopy&);
+};
+
+} // namespace internal
+
+///////////////////////////////////////////////////////////////////////////////
 // SkipWhitespace
 
 //! Skip the JSON white spaces in a stream.
@@ -135,9 +173,9 @@ struct BaseReaderHandler {
 */
 template<typename InputStream>
 void SkipWhitespace(InputStream& is) {
-	StreamLocalCopy<InputStream, StreamTraits<InputStream>::copyOptimization> s(is);
-	while (s->Peek() == ' ' || s->Peek() == '\n' || s->Peek() == '\r' || s->Peek() == '\t')
-		s->Take();
+	internal::StreamLocalCopy<InputStream, StreamTraits<InputStream>::copyOptimization> s(is);
+	while (s.s.Peek() == ' ' || s.s.Peek() == '\n' || s.s.Peek() == '\r' || s.s.Peek() == '\t')
+		s.s.Take();
 }
 
 #ifdef RAPIDJSON_SSE42
@@ -448,19 +486,19 @@ private:
 	// Parse string and generate String event. Different code paths for kParseInsituFlag.
 	template<unsigned parseFlags, typename InputStream, typename Handler>
 	void ParseString(InputStream& is, Handler& handler) {
-		StreamLocalCopy<InputStream, StreamTraits<InputStream>::copyOptimization> s(is);
+		internal::StreamLocalCopy<InputStream, StreamTraits<InputStream>::copyOptimization> s(is);
 		if (parseFlags & kParseInsituFlag) {
-			Ch *head = s->PutBegin();
-			ParseStringToStream<parseFlags, SourceEncoding, SourceEncoding>(*s, *s);
+			Ch *head = s.s.PutBegin();
+			ParseStringToStream<parseFlags, SourceEncoding, SourceEncoding>(s.s, s.s);
 			if (HasParseError())
 				return;
-			size_t length = s->PutEnd(head) - 1;
+			size_t length = s.s.PutEnd(head) - 1;
 			RAPIDJSON_ASSERT(length <= 0xFFFFFFFF);
 			handler.String((typename TargetEncoding::Ch*)head, SizeType(length), false);
 		}
 		else {
 			StackStream stackStream(stack_);
-			ParseStringToStream<parseFlags, SourceEncoding, TargetEncoding>(*s, stackStream);
+			ParseStringToStream<parseFlags, SourceEncoding, TargetEncoding>(s.s, stackStream);
 			if (HasParseError())
 				return;
 			handler.String(stack_.template Pop<typename TargetEncoding::Ch>(stackStream.length_), stackStream.length_ - 1, true);
@@ -527,43 +565,43 @@ private:
 
 	template<unsigned parseFlags, typename InputStream, typename Handler>
 	void ParseNumber(InputStream& is, Handler& handler) {
-		StreamLocalCopy<InputStream, StreamTraits<InputStream>::copyOptimization> s(is);
+		internal::StreamLocalCopy<InputStream, StreamTraits<InputStream>::copyOptimization> s(is);
 		// Parse minus
 		bool minus = false;
-		if (s->Peek() == '-') {
+		if (s.s.Peek() == '-') {
 			minus = true;
-			s->Take();
+			s.s.Take();
 		}
 
 		// Parse int: zero / ( digit1-9 *DIGIT )
 		unsigned i;
 		bool try64bit = false;
-		if (s->Peek() == '0') {
+		if (s.s.Peek() == '0') {
 			i = 0;
-			s->Take();
+			s.s.Take();
 		}
-		else if (s->Peek() >= '1' && s->Peek() <= '9') {
-			i = static_cast<unsigned>(s->Take() - '0');
+		else if (s.s.Peek() >= '1' && s.s.Peek() <= '9') {
+			i = static_cast<unsigned>(s.s.Take() - '0');
 
 			if (minus)
-				while (s->Peek() >= '0' && s->Peek() <= '9') {
+				while (s.s.Peek() >= '0' && s.s.Peek() <= '9') {
 					if (i >= 214748364) { // 2^31 = 2147483648
-						if (i != 214748364 || s->Peek() > '8') {
+						if (i != 214748364 || s.s.Peek() > '8') {
 							try64bit = true;
 							break;
 						}
 					}
-					i = i * 10 + static_cast<unsigned>(s->Take() - '0');
+					i = i * 10 + static_cast<unsigned>(s.s.Take() - '0');
 				}
 			else
-				while (s->Peek() >= '0' && s->Peek() <= '9') {
+				while (s.s.Peek() >= '0' && s.s.Peek() <= '9') {
 					if (i >= 429496729) { // 2^32 - 1 = 4294967295
-						if (i != 429496729 || s->Peek() > '5') {
+						if (i != 429496729 || s.s.Peek() > '5') {
 							try64bit = true;
 							break;
 						}
 					}
-					i = i * 10 + static_cast<unsigned>(s->Take() - '0');
+					i = i * 10 + static_cast<unsigned>(s.s.Take() - '0');
 				}
 		}
 		else
@@ -575,22 +613,22 @@ private:
 		if (try64bit) {
 			i64 = i;
 			if (minus) 
-				while (s->Peek() >= '0' && s->Peek() <= '9') {					
+				while (s.s.Peek() >= '0' && s.s.Peek() <= '9') {					
 					if (i64 >= UINT64_C(922337203685477580)) // 2^63 = 9223372036854775808
-						if (i64 != UINT64_C(922337203685477580) || s->Peek() > '8') {
+						if (i64 != UINT64_C(922337203685477580) || s.s.Peek() > '8') {
 							useDouble = true;
 							break;
 						}
-					i64 = i64 * 10 + static_cast<unsigned>(s->Take() - '0');
+					i64 = i64 * 10 + static_cast<unsigned>(s.s.Take() - '0');
 				}
 			else
-				while (s->Peek() >= '0' && s->Peek() <= '9') {					
+				while (s.s.Peek() >= '0' && s.s.Peek() <= '9') {					
 					if (i64 >= UINT64_C(1844674407370955161)) // 2^64 - 1 = 18446744073709551615
-						if (i64 != UINT64_C(1844674407370955161) || s->Peek() > '5') {
+						if (i64 != UINT64_C(1844674407370955161) || s.s.Peek() > '5') {
 							useDouble = true;
 							break;
 						}
-					i64 = i64 * 10 + static_cast<unsigned>(s->Take() - '0');
+					i64 = i64 * 10 + static_cast<unsigned>(s.s.Take() - '0');
 				}
 		}
 
@@ -598,59 +636,59 @@ private:
 		double d = 0.0;
 		if (useDouble) {
 			d = (double)i64;
-			while (s->Peek() >= '0' && s->Peek() <= '9') {
+			while (s.s.Peek() >= '0' && s.s.Peek() <= '9') {
 				if (d >= 1E307)
 					RAPIDJSON_PARSE_ERROR(kParesErrorNumberTooBig, is.Tell());
-				d = d * 10 + (s->Take() - '0');
+				d = d * 10 + (s.s.Take() - '0');
 			}
 		}
 
 		// Parse frac = decimal-point 1*DIGIT
 		int expFrac = 0;
-		if (s->Peek() == '.') {
+		if (s.s.Peek() == '.') {
 			if (!useDouble) {
 				d = try64bit ? (double)i64 : (double)i;
 				useDouble = true;
 			}
-			s->Take();
+			s.s.Take();
 
-			if (s->Peek() >= '0' && s->Peek() <= '9') {
-				d = d * 10 + (s->Take() - '0');
+			if (s.s.Peek() >= '0' && s.s.Peek() <= '9') {
+				d = d * 10 + (s.s.Take() - '0');
 				--expFrac;
 			}
 			else
 				RAPIDJSON_PARSE_ERROR(kParseErrorNumberMissFraction, is.Tell());
 
-			while (s->Peek() >= '0' && s->Peek() <= '9') {
+			while (s.s.Peek() >= '0' && s.s.Peek() <= '9') {
 				if (expFrac > -16) {
-					d = d * 10 + (s->Peek() - '0');
+					d = d * 10 + (s.s.Peek() - '0');
 					--expFrac;
 				}
-				s->Take();
+				s.s.Take();
 			}
 		}
 
 		// Parse exp = e [ minus / plus ] 1*DIGIT
 		int exp = 0;
-		if (s->Peek() == 'e' || s->Peek() == 'E') {
+		if (s.s.Peek() == 'e' || s.s.Peek() == 'E') {
 			if (!useDouble) {
 				d = try64bit ? (double)i64 : (double)i;
 				useDouble = true;
 			}
-			s->Take();
+			s.s.Take();
 
 			bool expMinus = false;
-			if (s->Peek() == '+')
-				s->Take();
-			else if (s->Peek() == '-') {
-				s->Take();
+			if (s.s.Peek() == '+')
+				s.s.Take();
+			else if (s.s.Peek() == '-') {
+				s.s.Take();
 				expMinus = true;
 			}
 
-			if (s->Peek() >= '0' && s->Peek() <= '9') {
-				exp = s->Take() - '0';
-				while (s->Peek() >= '0' && s->Peek() <= '9') {
-					exp = exp * 10 + (s->Take() - '0');
+			if (s.s.Peek() >= '0' && s.s.Peek() <= '9') {
+				exp = s.s.Take() - '0';
+				while (s.s.Peek() >= '0' && s.s.Peek() <= '9') {
+					exp = exp * 10 + (s.s.Take() - '0');
 					if (exp > 308)
 						RAPIDJSON_PARSE_ERROR(kParesErrorNumberTooBig, is.Tell());
 				}
